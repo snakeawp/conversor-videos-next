@@ -55,11 +55,19 @@ export async function POST(request: NextRequest) {
       updateProgress(conversionId, 0, 'erro')
       return NextResponse.json(
         { 
-          error: 'fluent-ffmpeg não está instalado. Execute: npm install fluent-ffmpeg',
-          details: 'Esta API requer o pacote fluent-ffmpeg para funcionar. Use FFmpeg.wasm no navegador como alternativa.',
-          conversionId
+          error: 'FFmpeg não está disponível no servidor',
+          details: 'Esta API requer o FFmpeg para funcionar. O fluent-ffmpeg não foi encontrado.',
+          suggestion: 'Esta aplicação não pode converter vídeos no servidor atual. Considere usar FFmpeg.wasm no navegador.',
+          conversionId,
+          timestamp: new Date().toISOString()
         },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Conversion-Id': conversionId
+          }
+        }
       )
     }
 
@@ -68,7 +76,21 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       updateProgress(conversionId, 0, 'erro')
-      return NextResponse.json({ error: 'Arquivo não fornecido', conversionId }, { status: 400 })
+      return NextResponse.json(
+        { 
+          error: 'Arquivo não fornecido',
+          details: 'Nenhum arquivo de vídeo foi enviado na requisição',
+          conversionId,
+          timestamp: new Date().toISOString()
+        },
+        { 
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Conversion-Id': conversionId
+          }
+        }
+      )
     }
 
     // Criar arquivos temporários
@@ -97,7 +119,8 @@ export async function POST(request: NextRequest) {
       updateProgress(conversionId, 10, 'convertendo')
 
       // Converter vídeo usando FFmpeg - Tentar NVENC primeiro, depois CPU
-      await new Promise<void>(async (resolve, reject) => {
+      // Adicionar timeout de segurança (10 minutos para Vercel)
+      const conversionPromise = new Promise<void>(async (resolve, reject) => {
         // Função para tentar conversão com NVIDIA HEVC (NVENC)
         const tryNvencConversion = () => {
           return new Promise<void>((resolveNvenc, rejectNvenc) => {
@@ -223,6 +246,17 @@ export async function POST(request: NextRequest) {
         }
       })
 
+      // Timeout de segurança (8 minutos para ser menor que o limite do Vercel)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          updateProgress(conversionId, 0, 'erro')
+          reject(new Error('TIMEOUT: Conversão excedeu o tempo limite de 8 minutos. Tente um arquivo menor.'))
+        }, 8 * 60 * 1000) // 8 minutos
+      })
+
+      // Aguardar conversão ou timeout
+      await Promise.race([conversionPromise, timeoutPromise])
+
       // Verificar se arquivo de saída foi criado
       const fs = require('fs')
       if (!fs.existsSync(outputPath)) {
@@ -262,12 +296,44 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Erro na API de conversão:', error)
+    
+    // Atualizar progresso para erro
+    updateProgress(conversionId, 0, 'erro')
+    
+    // Garantir que sempre retornamos JSON válido
+    let errorMessage = 'Erro interno do servidor'
+    let suggestion = 'Tente novamente ou use um arquivo menor'
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      
+      // Mensagens específicas para diferentes tipos de erro
+      if (error.message.includes('fluent-ffmpeg')) {
+        suggestion = 'FFmpeg não está disponível no servidor. Use FFmpeg.wasm no navegador como alternativa.'
+      } else if (error.message.includes('TIMEOUT') || error.message.includes('timeout')) {
+        suggestion = 'Timeout na conversão. Tente um arquivo menor ou menos complexo.'
+      } else if (error.message.includes('ENOMEM') || error.message.includes('memory')) {
+        suggestion = 'Erro de memória. Tente um arquivo menor.'
+      } else if (error.message.includes('ENOENT')) {
+        suggestion = 'FFmpeg não encontrado no sistema. Verifique a instalação.'
+      }
+    }
+    
     return NextResponse.json(
       { 
-        error: 'Erro interno do servidor: ' + (error as Error).message,
-        suggestion: 'Tente usar FFmpeg.wasm no navegador como alternativa, ou verifique se o FFmpeg está instalado no servidor.'
+        error: errorMessage,
+        suggestion,
+        conversionId,
+        timestamp: new Date().toISOString()
       },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Conversion-Id': conversionId,
+          'Access-Control-Expose-Headers': 'X-Conversion-Id'
+        }
+      }
     )
   }
 }

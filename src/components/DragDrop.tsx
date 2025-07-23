@@ -831,8 +831,35 @@ export default function DragDrop() {
       }
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || `Erro HTTP ${response.status}`)
+        let errorMessage = `Erro HTTP ${response.status}`
+        
+        try {
+          // Tentar parsear como JSON primeiro
+          const errorData = await response.json()
+          errorMessage = errorData.error || errorMessage
+        } catch (jsonError) {
+          // Se não for JSON válido, tentar ler como texto
+          try {
+            const errorText = await response.text()
+            // Se for HTML de erro da Vercel, extrair informação útil
+            if (errorText.includes('Internal Server Error') || errorText.includes('Error 500')) {
+              errorMessage = 'Erro interno do servidor (500). Verifique os logs da aplicação.'
+            } else if (errorText.includes('Request Entity Too Large') || errorText.includes('413')) {
+              errorMessage = 'Arquivo muito grande. Tente um arquivo menor.'
+            } else if (errorText.includes('Timeout') || errorText.includes('504')) {
+              errorMessage = 'Timeout na conversão. Arquivo pode ser muito grande ou complexo.'
+            } else if (errorText.trim()) {
+              // Se tem conteúdo de texto mas não é JSON, mostrar parte dele
+              const preview = errorText.substring(0, 100)
+              errorMessage = `Erro do servidor: ${preview}${errorText.length > 100 ? '...' : ''}`
+            }
+          } catch (textError) {
+            // Se não conseguir ler nem como texto
+            errorMessage = `Erro HTTP ${response.status} - Não foi possível obter detalhes do erro`
+          }
+        }
+        
+        throw new Error(errorMessage)
       }
 
       // console.log('✅ Conversão completada! Processando download...')
