@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { generateContentText } from '@/utils/generateContentText'
 import { useProgress } from '@/contexts/ProgressContext'
+import { useFFmpeg } from '@/hooks/useFFmpeg'
 
 // Interface para File System Access API
 interface FileSystemDirectoryHandle {
@@ -82,6 +83,7 @@ type VideoData = {
 
 export default function DragDrop() {
   const { progressMap, updateProgress: updateProgressContext, getProgress: getProgressContext } = useProgress()
+  const { ffmpeg, isLoaded: isFFmpegLoaded, isLoading: isFFmpegLoading, loadFFmpeg, convertVideo, error: ffmpegError } = useFFmpeg()
   
   const [videos, setVideos] = useState<VideoData[]>([])
   const [error, setError] = useState('')
@@ -110,9 +112,21 @@ export default function DragDrop() {
 
   // Carregar configurações ao inicializar
   useEffect(() => {
-    // Para aplicações web, não há configurações persistentes do sistema de arquivos
-    // O usuário escolherá o local na hora do download
-  }, [])
+    // Carregar FFmpeg.wasm automaticamente
+    if (!isFFmpegLoaded && !isFFmpegLoading) {
+      loadFFmpeg().catch(err => {
+        console.error('Erro ao carregar FFmpeg:', err)
+        setError('Erro ao inicializar o conversor. Recarregue a página.')
+      })
+    }
+  }, [isFFmpegLoaded, isFFmpegLoading, loadFFmpeg])
+
+  // Mostrar erro do FFmpeg se houver
+  useEffect(() => {
+    if (ffmpegError) {
+      setError(`Erro no FFmpeg: ${ffmpegError}`)
+    }
+  }, [ffmpegError])
 
   // Sincronizar progresso do contexto com os vídeos
   useEffect(() => {
@@ -591,13 +605,29 @@ export default function DragDrop() {
         }
       }, 1000)
 
-      // OPÇÃO 1: Usar FFmpeg.wasm (conversão no navegador)
-      if (typeof window !== 'undefined' && window.FFmpeg) {
+      // PRIORIDADE 1: Usar FFmpeg.wasm (conversão no navegador) - SEMPRE TENTAR PRIMEIRO
+      if (isFFmpegLoaded) {
         await convertWithFFmpegWasm(video, individualTimer, videoStartTime, getIndividualElapsedTime)
       } 
-      // OPÇÃO 2: Enviar para API backend
-      else {
+      // PRIORIDADE 2: Se FFmpeg.wasm não estiver disponível, tentar carregar
+      else if (!isFFmpegLoading && !ffmpegError) {
+        setError('Carregando conversor... Aguarde.')
+        await loadFFmpeg()
+        if (isFFmpegLoaded) {
+          await convertWithFFmpegWasm(video, individualTimer, videoStartTime, getIndividualElapsedTime)
+        } else {
+          throw new Error('Não foi possível carregar o conversor no navegador.')
+        }
+      }
+      // FALLBACK: Usar API do servidor se FFmpeg.wasm falhar
+      else if (ffmpegError) {
+        console.warn('⚠️ FFmpeg.wasm não disponível, usando servidor como fallback')
+        setError('Conversor local não disponível. Tentando servidor...')
         await convertWithBackendAPI(video, individualTimer, videoStartTime, getIndividualElapsedTime)
+      }
+      // AGUARDAR: Se ainda estiver carregando
+      else {
+        throw new Error('Conversor ainda está carregando. Aguarde um momento e tente novamente.')
       }
 
     } catch (err) {
@@ -627,107 +657,97 @@ export default function DragDrop() {
     videoStartTime: number | null,
     getIndividualElapsedTime: (startTime: number) => { elapsed: number; formatted: string }
   ) => {
-    if (!window.FFmpeg) {
-      throw new Error('FFmpeg.wasm não está disponível')
+    if (!isFFmpegLoaded) {
+      throw new Error('FFmpeg.wasm não está carregado')
     }
 
-    const { FFmpeg } = window.FFmpeg
-    const ffmpeg = new FFmpeg()
-
-    // Carregar FFmpeg.wasm
-    await ffmpeg.load()
-
-    // Converter File para Uint8Array
-    const arrayBuffer = await video.fileObject.arrayBuffer()
-    const inputData = new Uint8Array(arrayBuffer)
-    
-    // Escrever arquivo de entrada
-    const inputFileName = `input.${video.extension.toLowerCase()}`
     const outputFileName = `${video.name.replace(/\.[^/.]+$/, "")}.mkv`
     
-    await ffmpeg.writeFile(inputFileName, inputData)
+    try {
+      console.log('🚀 Iniciando conversão com FFmpeg.wasm:', video.name)
+      
+      // Configurar callback de progresso
+      const onProgress = (progress: number) => {
+        setVideos(prev => prev.map(v => 
+          v.id === video.id 
+            ? { ...v, progress }
+            : v
+        ))
+      }
 
-    // Configurar callback de progresso
-    ffmpeg.on('progress', (data: { progress: number }) => {
-      const progressPercent = Math.round(data.progress * 100)
+      console.log('🚀 Iniciando conversão com FFmpeg.wasm (H.265 → H.264 fallback):', video.name)
+
+      // Executar conversão
+      const blob = await convertVideo(video.fileObject, outputFileName, onProgress)
+      
+      console.log('✅ Conversão concluída!', blob.size, 'bytes')
+      
+      // Parar timer individual
+      if (individualTimer) {
+        clearInterval(individualTimer)
+      }
+      
+      const finalTime = videoStartTime ? getIndividualElapsedTime(videoStartTime) : { formatted: '00:00' }
+      
+      // Fazer download
+      const url = URL.createObjectURL(blob)
+      
+      // Se o usuário escolheu um diretório personalizado e o navegador suporta
+      if (video.customOutputDir && window.showSaveFilePicker) {
+        try {
+          console.log('💾 Salvando com File System Access API...')
+          const fileHandle = await window.showSaveFilePicker({
+            suggestedName: outputFileName,
+            types: [{
+              description: 'MKV Video',
+              accept: {'video/x-matroska': ['.mkv']}
+            }]
+          })
+          
+          const writable = await fileHandle.createWritable()
+          await writable.write(blob)
+          await writable.close()
+          console.log('✅ Arquivo salvo:', fileHandle.name)
+        } catch (saveErr) {
+          if ((saveErr as Error).name !== 'AbortError') {
+            console.warn('⚠️ Erro ao salvar, usando download padrão:', saveErr)
+            downloadFile(url, outputFileName)
+          } else {
+            console.log('❌ Usuário cancelou o salvamento')
+          }
+        }
+      } else {
+        // Download padrão do navegador
+        console.log('📥 Iniciando download padrão...')
+        downloadFile(url, outputFileName)
+        console.log('✅ Download iniciado:', outputFileName)
+      }
+      
+      // Limpar recursos
+      URL.revokeObjectURL(url)
+      
+      // Atualizar estado final
       setVideos(prev => prev.map(v => 
         v.id === video.id 
-          ? { ...v, progress: progressPercent }
+          ? { 
+              ...v, 
+              converting: false, 
+              converted: true, 
+              progress: 100, 
+              selected: false, 
+              totalTime: finalTime.formatted,
+              elapsedTime: undefined 
+            }
           : v
       ))
-    })
-
-    // Executar conversão
-    await ffmpeg.exec([
-      '-i', inputFileName,
-      '-c:v', 'libx265',
-      '-crf', '23',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-map', '0',
-      '-f', 'matroska',
-      outputFileName
-    ])
-
-    // Ler arquivo de saída
-    const outputData = await ffmpeg.readFile(outputFileName)
-    
-    // Parar timer
-    if (individualTimer) {
-      clearInterval(individualTimer)
+      
+      setConvertingVideoId(null)
+      setSuccessMessage(`✅ Vídeo "${video.name}" convertido para MKV com sucesso!`)
+      
+    } catch (err) {
+      console.error('❌ Erro na conversão FFmpeg.wasm:', err)
+      throw err
     }
-    
-    const finalTime = videoStartTime ? getIndividualElapsedTime(videoStartTime) : { formatted: '00:00' }
-    
-    // Criar blob e fazer download
-    const blob = new Blob([outputData], { type: 'video/x-matroska' })
-    const url = URL.createObjectURL(blob)
-    
-    // Se o usuário escolheu um diretório personalizado e o navegador suporta
-    if (video.customOutputDir && window.showSaveFilePicker) {
-      try {
-        const fileHandle = await window.showSaveFilePicker({
-          suggestedName: outputFileName,
-          types: [{
-            description: 'MKV Video',
-            accept: {'video/x-matroska': ['.mkv']}
-          }]
-        })
-        
-        const writable = await fileHandle.createWritable()
-        await writable.write(blob)
-        await writable.close()
-      } catch (saveErr) {
-        if ((saveErr as Error).name !== 'AbortError') {
-          console.warn('Erro ao salvar com File System Access API, usando download padrão:', saveErr)
-          downloadFile(url, outputFileName)
-        }
-      }
-    } else {
-      // Download padrão do navegador
-      downloadFile(url, outputFileName)
-    }
-    
-    // Limpar recursos
-    URL.revokeObjectURL(url)
-    
-    // Atualizar estado
-    setVideos(prev => prev.map(v => 
-      v.id === video.id 
-        ? { 
-            ...v, 
-            converting: false, 
-            converted: true, 
-            progress: 100, 
-            selected: false, 
-            totalTime: finalTime.formatted,
-            elapsedTime: undefined 
-          }
-        : v
-    ))
-    
-    setConvertingVideoId(null)
-    setSuccessMessage(`Vídeo convertido para MKV com sucesso!`)
   }
 
   // Função para conversão com API backend (versão com progresso em tempo real)
@@ -1000,8 +1020,33 @@ export default function DragDrop() {
             Arraste e solte ou selecione seus arquivos de vídeo
           </p>
           <p className="text-sm text-muted-foreground/80 mt-1">
-            Compressão para MKV com codec HEVC (H.265) • GPU NVIDIA NVENC + CPU fallback • Mantém áudio dual e legendas
+            Conversão 100% no navegador com FFmpeg.wasm • H.265 HEVC (NVENC otimizado) + H.264 fallback • Mantém áudio dual e legendas
           </p>
+          <div className="flex items-center justify-center gap-2 mt-2">
+            {isFFmpegLoading && (
+              <div className="flex items-center gap-2 text-xs text-blue-600">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>Carregando conversor local...</span>
+              </div>
+            )}
+            {isFFmpegLoaded && (
+              <div className="flex items-center gap-2 text-xs text-green-600">
+                <CheckCircle className="h-3 w-3" />
+                <span>Conversor local pronto (100% offline)</span>
+              </div>
+            )}
+            {ffmpegError && (
+              <div className="flex items-center gap-2 text-xs text-orange-600">
+                <AlertCircle className="h-3 w-3" />
+                <span>Conversor local indisponível - usando servidor</span>
+              </div>
+            )}
+            {!isFFmpegLoading && !isFFmpegLoaded && !ffmpegError && (
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <span>Inicializando conversor...</span>
+              </div>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground/60 mt-1">
             Formatos suportados: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V, MPG, MPEG, 3GP, OGV, TS, MTS, M2TS, F4V
           </p>
