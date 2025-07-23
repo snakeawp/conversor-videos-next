@@ -282,6 +282,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-
-// Exportar apenas o store de jobs
-export { conversionJobs }
