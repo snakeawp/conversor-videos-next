@@ -117,10 +117,20 @@ export function useFFmpeg(): UseFFmpegReturn {
         console.log('✅ Conversão H.265 concluída com sucesso!')
       } catch (h265Error) {
         console.warn('⚠️ H.265 falhou, tentando H.264 como fallback:', h265Error)
+        console.warn('⚠️ Detalhes do erro H.265:', {
+          message: (h265Error as Error).message,
+          name: (h265Error as Error).name,
+          stack: (h265Error as Error).stack
+        })
         
         // FALLBACK: H.264 se H.265 falhar
-        await convertWithH264(ffmpeg, inputFileName, outputName)
-        console.log('✅ Conversão H.264 fallback concluída!')
+        try {
+          await convertWithH264(ffmpeg, inputFileName, outputName)
+          console.log('✅ Conversão H.264 fallback concluída!')
+        } catch (h264Error) {
+          console.error('❌ H.264 também falhou:', h264Error)
+          throw new Error(`Ambos H.265 e H.264 falharam. H.265: ${(h265Error as Error).message}, H.264: ${(h264Error as Error).message}`)
+        }
       }
       
       // Ler arquivo convertido
@@ -143,77 +153,64 @@ export function useFFmpeg(): UseFFmpegReturn {
     }
   }
 
-  // Função para conversão com H.265 (configurações NVENC adaptadas)
+  // Função para conversão com H.265 (configurações NVENC adaptadas - versão simplificada)
   const convertWithH265 = async (ffmpeg: any, inputFileName: string, outputName: string) => {
     await ffmpeg.exec([
       '-i', inputFileName,
       
-      // === CODEC E FORMATO (Adaptação das configurações NVENC) ===
-      '-c:v', 'libx265',          // H.265 para melhor compressão (equivalente ao hevc_nvenc)
-      '-c:a', 'aac',              // AAC para áudio (menor tamanho)
-      '-c:s', 'copy',             // Copiar legendas sem recodificação
+      // === CODEC E FORMATO ===
+      '-c:v', 'libx265',          // H.265 para melhor compressão
+      '-c:a', 'aac',              // AAC para áudio
+      '-c:s', 'copy',             // Copiar legendas se existirem
       
       // === MAPEAMENTO DE STREAMS ===
-      '-map', '0',                // Mapear todos os streams do input
-      '-disposition:s:0', 'default', // Definir primeira legenda como padrão
+      '-map', '0',                // Mapear todos os streams
       
-      // === CONFIGURAÇÕES DE VÍDEO H.265 OTIMIZADA ===
-      '-preset', 'slow',          // Preset mais lento = melhor compressão (equiv. preset p6)
-      '-crf', '25',               // CRF 25 para alta compressão (equiv. qp 25)
-      '-profile:v', 'main10',     // Profile H.265 main10 otimizado
-      '-tier', 'high',            // High tier para melhor compressão
+      // === CONFIGURAÇÕES DE VÍDEO H.265 COMPATÍVEL ===
+      '-preset', 'medium',        // Preset balanceado (slow pode ser muito pesado)
+      '-crf', '25',               // CRF 25 para boa compressão
       
-      // === CONFIGURAÇÕES DE ÁUDIO OTIMIZADA ===
-      '-b:a', '128k',             // Bitrate de áudio 128 kbps
-      '-ac', '2',                 // Força 2 canais de áudio  
+      // === CONFIGURAÇÕES DE ÁUDIO ===
+      '-b:a', '128k',             // Bitrate de áudio 128k
+      '-ac', '2',                 // 2 canais de áudio
       '-ar', '44100',             // Sample rate padrão
       
-      // === CONFIGURAÇÕES DE CONTAINER MKV ===
+      // === FORMATO E METADADOS ===
       '-f', 'matroska',           // Formato MKV
-      
-      // === METADADOS (Configurações de idioma PT-BR) ===
-      '-metadata:s:a:0', 'language=por', // Idioma do áudio como português
-      '-metadata:s:s:0', 'language=por', // Idioma da legenda como português
-      '-metadata', 'title=Convertido para MKV OCFlix H.265', // Título personalizado
-      '-metadata', 'language=por', // Idioma geral do arquivo
+      '-metadata', 'title=Convertido para MKV OCFlix H.265',
+      '-metadata', 'language=por',
       
       // Arquivo de saída
       outputName
     ])
   }
 
-  // Função para conversão com H.264 (fallback)
+  // Função para conversão com H.264 (fallback compatível)
   const convertWithH264 = async (ffmpeg: any, inputFileName: string, outputName: string) => {
     await ffmpeg.exec([
       '-i', inputFileName,
       
-      // === CODEC E FORMATO (H.264 como fallback) ===
+      // === CODEC E FORMATO ===
       '-c:v', 'libx264',          // H.264 (mais compatível)
       '-c:a', 'aac',              // AAC para áudio
-      '-c:s', 'copy',             // Copiar legendas sem recodificação
+      '-c:s', 'copy',             // Copiar legendas se existirem
       
       // === MAPEAMENTO DE STREAMS ===
-      '-map', '0',                // Mapear todos os streams do input
-      '-disposition:s:0', 'default', // Definir primeira legenda como padrão
+      '-map', '0',                // Mapear todos os streams
       
-      // === CONFIGURAÇÕES DE VÍDEO H.264 OTIMIZADA ===
-      '-preset', 'slow',          // Preset mais lento = melhor compressão
+      // === CONFIGURAÇÕES DE VÍDEO H.264 ===
+      '-preset', 'medium',        // Preset balanceado
       '-crf', '23',               // CRF 23 para boa qualidade
-      '-profile:v', 'high',       // Profile H.264 high
       
       // === CONFIGURAÇÕES DE ÁUDIO ===
-      '-b:a', '128k',             // Bitrate de áudio 128 kbps
-      '-ac', '2',                 // Força 2 canais de áudio
+      '-b:a', '128k',             // Bitrate de áudio 128k
+      '-ac', '2',                 // 2 canais de áudio
       '-ar', '44100',             // Sample rate padrão
       
-      // === CONFIGURAÇÕES DE CONTAINER MKV ===
+      // === FORMATO E METADADOS ===
       '-f', 'matroska',           // Formato MKV
-      
-      // === METADADOS (Configurações de idioma PT-BR) ===
-      '-metadata:s:a:0', 'language=por', // Idioma do áudio como português
-      '-metadata:s:s:0', 'language=por', // Idioma da legenda como português
-      '-metadata', 'title=Convertido para MKV OCFlix H.264', // Título personalizado
-      '-metadata', 'language=por', // Idioma geral do arquivo
+      '-metadata', 'title=Convertido para MKV OCFlix H.264',
+      '-metadata', 'language=por',
       
       // Arquivo de saída
       outputName
