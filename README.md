@@ -1,36 +1,147 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Conversor de Vídeos OCFlix
 
-## Getting Started
+Uma aplicação Next.js moderna para conversão de vídeos para formato MKV com codec HEVC (H.265).
 
-First, run the development server:
+## ✨ Características
 
+- 🎬 **Conversão de Vídeo**: Converte vários formatos para MKV com codec HEVC
+- 📁 **File System Access API**: Permite escolher o local de salvamento (navegadores compatíveis)
+- 🖱️ **Drag & Drop**: Interface intuitiva para adicionar arquivos
+- ⚡ **Múltiplas Opções**: FFmpeg.wasm (cliente) ou API backend
+- 📊 **Progresso em Tempo Real**: Acompanhe o progresso das conversões
+- 🎨 **Interface Moderna**: Built with Next.js 14 e Tailwind CSS
+- 📱 **Responsivo**: Funciona bem em desktop e mobile
+
+## 🚀 Tecnologias
+
+- **Next.js 14** - Framework React
+- **TypeScript** - Tipagem estática
+- **Tailwind CSS** - Estilização
+- **Shadcn/ui** - Componentes UI
+- **File System Access API** - Acesso nativo ao sistema de arquivos
+- **FFmpeg.wasm** - Conversão no navegador
+- **Lucide React** - Ícones
+
+## 📦 Instalação
+
+1. **Clone o repositório**
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repo-url>
+cd convert-videos-snake
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. **Instale as dependências**
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. **Execute em modo desenvolvimento**
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🔧 Opções de Conversão
 
-## Learn More
+### 1. FFmpeg.wasm (Padrão)
+- ✅ Funciona completamente no navegador
+- ✅ Privacidade total (arquivos não saem do dispositivo)
+- ✅ Não requer servidor backend
+- ⚠️ Pode ser mais lento para arquivos grandes
 
-To learn more about Next.js, take a look at the following resources:
+### 2. API Backend
+Para usar a conversão via servidor, instale as dependências adicionais:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install fluent-ffmpeg
+npm install -D @types/fluent-ffmpeg
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+E instale o FFmpeg no sistema:
+- **Windows**: Download do [ffmpeg.org](https://ffmpeg.org/download.html)
+- **macOS**: `brew install ffmpeg`
+- **Ubuntu**: `sudo apt install ffmpeg`
 
-## Deploy on Vercel
+## 📖 Como Usar
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **Adicionar Vídeos**: Arraste arquivos ou clique em "Selecionar Arquivos"
+2. **Configurar Saída**: Escolha o diretório de destino (se suportado)
+3. **Converter**: Selecione vídeos e clique em "Comprimir Selecionados"
+4. **Download**: Os arquivos convertidos serão baixados automaticamente
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🎯 Formatos Suportados
+
+**Entrada**: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V, MPG, MPEG, 3GP, OGV, TS, MTS, M2TS, F4V
+
+**Saída**: MKV com codec HEVC (H.265)
+
+## 🌐 Compatibilidade do Navegador
+
+| Funcionalidade | Chrome | Firefox | Safari | Edge |
+|----------------|--------|---------|--------|------|
+| Conversão FFmpeg.wasm | ✅ | ✅ | ✅ | ✅ |
+| File System Access API | ✅ | ❌ | ❌ | ✅ |
+| Download Automático | ✅ | ✅ | ✅ | ✅ |
+
+*Para navegadores sem File System Access API, os arquivos são baixados para a pasta padrão de downloads.*
+
+## 🔨 Scripts Disponíveis
+
+```bash
+npm run dev          # Desenvolvimento
+npm run build        # Build para produção
+npm run start        # Executar build de produção
+npm run lint         # Verificar código
+npm run type-check   # Verificar tipos TypeScript
+```
+
+## 📁 Estrutura do Projeto
+
+```
+src/
+├── app/
+│   ├── api/convert-video/    # API de conversão (opcional)
+│   ├── globals.css           # Estilos globais
+│   ├── layout.tsx           # Layout principal
+│   └── page.tsx             # Página inicial
+├── components/
+│   ├── ui/                  # Componentes Shadcn/ui
+│   └── DragDrop.tsx         # Componente principal
+├── lib/
+│   └── utils.ts             # Utilitários
+└── utils/
+    └── generateContentText.ts # Geração de texto promocional
+```
+
+## ⚙️ Configuração
+
+A aplicação funciona out-of-the-box com FFmpeg.wasm. Para conversão via API:
+
+1. Configure os caminhos do FFmpeg em `src/app/api/convert-video/route.ts`
+2. Ajuste as configurações de conversão conforme necessário
+
+## 🐛 Solução de Problemas
+
+**FFmpeg.wasm não carrega**: Verifique se os scripts estão sendo carregados corretamente no layout.tsx
+
+**File System Access API não funciona**: Esta API só funciona em navegadores baseados em Chromium (Chrome, Edge)
+
+**Conversão lenta**: FFmpeg.wasm é mais lento que a versão nativa. Para melhor performance, use a API backend
+
+**Erro na conversão**: Verifique se o arquivo de vídeo não está corrompido e se o formato é suportado
+
+## 📄 Licença
+
+Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes.
+
+## 🤝 Contribuição
+
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
+
+## 📞 Suporte
+
+Para dúvidas ou problemas, abra uma issue no repositório do projeto.
+# conversor-videos-next
